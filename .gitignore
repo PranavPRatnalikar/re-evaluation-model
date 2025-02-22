@@ -1,0 +1,19 @@
+# Ignore the entire index folder
+index/
+
+# Ignore index.pkl file
+index.pkl
+
+# Ignore everything inside the dataset folder
+dataset/
+
+# Ignore virtual environment (optional, but recommended)
+venv/
+
+# Ignore common system files
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.DS_Store
+Thumbs.db

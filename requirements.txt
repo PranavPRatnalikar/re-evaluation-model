@@ -1,0 +1,7 @@
+streamlit
+pdfplumber
+langchain
+langchain_google_genai
+faiss-cpu
+langchain-community
+pickle5
