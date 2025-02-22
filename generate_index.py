@@ -1,76 +1,105 @@
-# index.py
+import os
 import pdfplumber
 import pickle
-import os
+import faiss
+import numpy as np
+from langchain_community.vectorstores import FAISS  # Updated import
+from langchain.text_splitter import RecursiveCharacterTextSplitter  # Added import
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-# from langchain.vectorstores import FAISS
-from langchain_community.vectorstores import FAISS
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from typing import Dict, Any
-import re
 
-class TemplateProcessor:
-    def __init__(self, template_dir: str, api_key: str):
-        self.template_dir = template_dir
-        self.api_key = api_key
-        self.embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001",
-            google_api_key=api_key
-        )
-        self.metadata = {}
-        
-    def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extracts text from a PDF file."""
-        try:
-            with pdfplumber.open(pdf_path) as pdf:
-                text = ""
-                for page in pdf.pages:
-                    text += page.extract_text() or ""
-                return text.strip()
-        except Exception as e:
-            raise Exception(f"Error extracting text from {pdf_path}: {str(e)}")
+# Configuration
+API_KEY = "AIzaSyArdn9_Uabo9q0aYmm4dxybVEb0tj7dlrk"
 
-    def process_template_answers(self) -> None:
-        """Processes all template PDFs and creates FAISS index."""
-        all_texts = []
-        
-        # Process each template PDF
-        for pdf_file in os.listdir(self.template_dir):
-            if pdf_file.endswith('.pdf'):
-                question_number = pdf_file.split('.')[0].upper()  # e.g., "1A"
-                pdf_path = os.path.join(self.template_dir, pdf_file)
-                
-                # Extract text and store metadata
-                template_text = self.extract_text_from_pdf(pdf_path)
-                max_marks = self._get_max_marks(question_number)
-                
-                self.metadata[question_number] = {
-                    "template_text": template_text,
-                    "max_marks": max_marks
-                }
-                
-                all_texts.append({
-                    "text": template_text,
-                    "metadata": {"question": question_number}
-                })
-        
-        # Create FAISS index
-        vector_store = FAISS.from_texts(
-            texts=[item["text"] for item in all_texts],
-            embedding=self.embeddings,
-            metadatas=[item["metadata"] for item in all_texts]
-        )
-        
-        # Save index and metadata
-        vector_store.save_local("template_index")
-        with open("metadata.pkl", "wb") as f:
-            pickle.dump(self.metadata, f)
-            
-    def _get_max_marks(self, question_number: str) -> int:
-        """Define max marks for each question."""
-        marks_mapping = {
-            "1A": 5, "1B": 3, "2A": 4, "2B": 3,
-            # Add more mappings as needed
-        }
-        return marks_mapping.get(question_number, 0)
+# Dataset Paths
+DATASET_COMPLETE = "dataset_complete"  # Folder for complete template answer sheet
+DATASET_INDIVIDUAL = "dataset_individual"  # Folder for individual question answer PDFs
 
+# Index Names
+INDEX_COMPLETE = "index_complete"  # Index files for Feature 1
+INDEX_INDIVIDUAL = "index_individual"  # Index files for Feature 2
+
+def extract_text_from_pdf(pdf_path):
+    """Extracts text from a single PDF file."""
+    text = ""
+    with pdfplumber.open(pdf_path) as pdf_reader:
+        for page in pdf_reader.pages:
+            text += page.extract_text() or ""  # Handle NoneType
+    return text.strip()
+
+def generate_index_complete(api_key):
+    """Generates FAISS index for the complete template answer sheet."""
+    print("🔄 Extracting text from complete template answer sheet...")
+    template_text = ""
+    for file in os.listdir(DATASET_COMPLETE):
+        if file.endswith(".pdf"):
+            file_path = os.path.join(DATASET_COMPLETE, file)
+            template_text += extract_text_from_pdf(file_path)
+    
+    if not template_text:
+        print("❌ No valid text found in the complete template PDF.")
+        return
+
+    print("📖 Splitting text into smaller chunks...")
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    text_chunks = text_splitter.split_text(template_text)
+
+    print("🔍 Generating embeddings using Google AI...")
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+
+    print("📁 Creating FAISS vector store...")
+    vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
+
+    # Save FAISS index
+    print("💾 Saving FAISS index...")
+    vector_store.save_local(INDEX_COMPLETE)
+
+    # Save metadata separately
+    with open(f"{INDEX_COMPLETE}.pkl", "wb") as f:
+        pickle.dump(text_chunks, f)
+
+    print("✅ FAISS index and metadata saved successfully for complete template!")
+
+def generate_index_individual(api_key):
+    """Generates FAISS index for individual question answer PDFs."""
+    print("🔄 Extracting template answers...")
+    template_answers = {}
+    
+    for file in os.listdir(DATASET_INDIVIDUAL):
+        if file.endswith(".pdf"):
+            question_number = file.replace(".pdf", "").upper()  # Extract question ID (e.g., 1A)
+            file_path = os.path.join(DATASET_INDIVIDUAL, file)
+            extracted_text = extract_text_from_pdf(file_path)
+            if extracted_text:
+                template_answers[question_number] = extracted_text
+    
+    if not template_answers:
+        print("❌ No valid template answers found.")
+        return
+
+    print("🔍 Generating embeddings...")
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+    
+    texts = list(template_answers.values())
+    question_numbers = list(template_answers.keys())
+
+    text_embeddings = np.array([embeddings.embed_query(text) for text in texts]).astype('float32')
+
+    print("📁 Creating FAISS index...")
+    dimension = text_embeddings.shape[1]
+    index = faiss.IndexFlatL2(dimension)
+    index.add(text_embeddings)
+
+    print("💾 Saving FAISS index...")
+    faiss.write_index(index, f"{INDEX_INDIVIDUAL}.faiss")
+
+    with open(f"{INDEX_INDIVIDUAL}.pkl", "wb") as f:
+        pickle.dump(question_numbers, f)
+
+    print("✅ Indexing complete for individual question answers!")
+
+if __name__ == "__main__":
+    # Generate index for complete template answer sheet
+    generate_index_complete(API_KEY)
+
+    # Generate index for individual question answer PDFs
+    generate_index_individual(API_KEY)

@@ -3,7 +3,7 @@ index/
 
 # Ignore index.pkl file
 index.pkl
-
+index.faiss
 # Ignore everything inside the dataset folder
 dataset/
 
@@ -17,3 +17,10 @@ __pycache__/
 *.log
 .DS_Store
 Thumbs.db
+
+dataset_complete/
+dataset_individual/
+index_complete.pkl
+index_individual.faiss
+index_individual.pkl
+index_complete/
