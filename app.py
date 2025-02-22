@@ -5,8 +5,8 @@ import pickle
 import faiss
 import numpy as np
 import re
+from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain.vectorstores import FAISS
 
 # Configuration
 API_KEY = "AIzaSyArdn9_Uabo9q0aYmm4dxybVEb0tj7dlrk"
@@ -68,6 +68,13 @@ def extract_student_answers(pdf_file):
     
     return answers
 
+# Extract attempted questions for Feature 1
+def extract_attempted_questions(student_answer):
+    """Extracts and counts the number of questions attempted by the student."""
+    pattern = r"###\d+[A-Z]"  # Matches "###1A", "###2B", etc.
+    matches = re.findall(pattern, student_answer)
+    return len(matches)  # Number of questions attempted
+
 # Compute similarity for Feature 1
 def compute_similarity_complete(student_answer, vector_store):
     """Finds the most similar template answer and computes relevance score."""
@@ -85,6 +92,33 @@ def compute_similarity_complete(student_answer, vector_store):
     similarity_percentage = round((1 / (1 + score)) * 100, 2)
 
     return matched_doc.page_content, similarity_percentage
+
+# Evaluate answers for Feature 1
+def evaluate_answers_complete(student_answer, vector_store, max_marks=5):
+    """Evaluates the student's answer and calculates marks."""
+    if not student_answer:
+        return {"error": "No answer provided."}, 0.0
+
+    # Compute similarity
+    matched_text, similarity_score = compute_similarity_complete(student_answer, vector_store)
+
+    # Calculate marks obtained
+    marks_obtained = (similarity_score * max_marks) / 100
+
+    # Round marks to nearest integer or .5
+    decimal_part = marks_obtained - int(marks_obtained)
+    if decimal_part < 0.25:
+        marks_obtained = int(marks_obtained)
+    elif 0.25 <= decimal_part < 0.75:
+        marks_obtained = int(marks_obtained) + 0.5
+    else:
+        marks_obtained = int(marks_obtained) + 1
+
+    return {
+        "similarity": f"{similarity_score}%",
+        "marks_obtained": marks_obtained,
+        "max_marks": max_marks
+    }, marks_obtained
 
 # Compute similarity for Feature 2
 def compute_similarity_individual(student_answer, index, question_numbers, embeddings):
@@ -138,12 +172,19 @@ if uploaded_file:
         if student_answer:
             st.text_area("📜 Extracted Student Answer:", student_answer, height=150)
 
+            # Count the number of questions attempted
+            num_attempted = extract_attempted_questions(student_answer)
+            st.write(f"**Number of questions attempted:** {num_attempted}")
+
             if st.button("🔍 Check Similarity"):
                 with st.spinner("Comparing with template answer..."):
-                    matched_text, similarity_score = compute_similarity_complete(student_answer, index)
+                    result, marks_obtained = evaluate_answers_complete(student_answer, index)
                     
                     st.subheader("📊 Similarity Score:")
-                    st.write(f"**{similarity_score}% relevant to the template answer.**")
+                    st.write(f"**{result['similarity']} relevant to the template answer.**")
+                    
+                    st.subheader("🏆 Student's Score:")
+                    st.write(f"**{marks_obtained*num_attempted} Marks** (Out of {num_attempted * 5} Marks)")
     else:
         with st.spinner("Extracting text from student answer sheet..."):
             student_answers = extract_student_answers(uploaded_file)
@@ -159,4 +200,8 @@ if uploaded_file:
                     st.json(results)
                     
                     total_marks = sum(v["marks_obtained"] for v in results.values())
-                    st.subheader(f"🏆 Total Score: {total_marks} Marks")
+                    total_questions = len(results)
+                    marks_per_question = 5  # Each question is worth 5 marks
+                    total_marks_obtainable = total_questions * marks_per_question
+
+                    st.subheader(f"🏆 Total Score: {total_marks} Marks (Out of {total_marks_obtainable} Marks)")
