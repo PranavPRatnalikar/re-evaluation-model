@@ -9,7 +9,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # Configuration
-API_KEY = "AIzaSyArdn9_Uabo9q0aYmm4dxybVEb0tj7dlrk"
+API_KEY = "" # add google api key
 
 # Streamlit UI
 st.title("📄 Automated Answer Evaluation System")
